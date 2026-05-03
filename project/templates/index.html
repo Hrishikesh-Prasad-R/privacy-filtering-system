@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Context-Aware Privacy Filtering System</title>
+  <meta name="description" content="Upload an image — faces, license plates, and screens are automatically anonymized. Fully local." />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="upload-page">
+    <div class="card">
+      <div class="card__icon">🔒</div>
+      <h1 class="card__title">Context-Aware Privacy Filtering System</h1>
+      <p class="card__sub">Upload an image — faces, license plates, and screens will be automatically anonymized</p>
+
+      <div class="badge-row">
+        <span class="badge badge--blur">😐 Faces → Gaussian Blur</span>
+        <span class="badge badge--mask">🪪 Plates → Black Mask</span>
+        <span class="badge badge--pixel">🖥️ Screens → Pixelation</span>
+      </div>
+
+      {% if error %}
+      <div class="alert alert--error" role="alert">{{ error }}</div>
+      {% endif %}
+
+      <form method="POST" action="/process" enctype="multipart/form-data" class="upload-form" id="upload-form">
+        <label class="file-label" for="image-input">
+          <span class="file-label__icon">📁</span>
+          <span class="file-label__text" id="file-label-text">Choose an image file…</span>
+          <input type="file" name="image" id="image-input"
+                 accept="image/jpeg,image/png,image/bmp,image/webp"
+                 class="file-input" required />
+        </label>
+        <button type="submit" class="btn" id="submit-btn">
+          <span class="btn__text">Process Image</span>
+          <span class="btn__spinner" hidden aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <p class="privacy-note">🛡️ Your image is processed locally and never stored.</p>
+    </div>
+  </div>
+
+  <script>
+    const input = document.getElementById('image-input');
+    const labelText = document.getElementById('file-label-text');
+    input.addEventListener('change', () => {
+      labelText.textContent = input.files[0] ? input.files[0].name : 'Choose an image file…';
+    });
+    const form = document.getElementById('upload-form');
+    const btn  = document.getElementById('submit-btn');
+    form.addEventListener('submit', () => {
+      btn.querySelector('.btn__text').textContent = 'Processing…';
+      btn.querySelector('.btn__spinner').hidden = false;
+      btn.disabled = true;
+    });
+  </script>
+</body>
+</html>

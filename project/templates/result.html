@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Result — Context-Aware Privacy Filtering System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="result-page">
+
+    <header class="result-header">
+      <span class="card__icon">🔒</span>
+      <h1 class="card__title">Context-Aware Privacy Filtering System</h1>
+
+      <div class="stats-row">
+        <span class="stat stat--blue">😐 {{ faces }} face{{ 's' if faces != 1 else '' }} blurred</span>
+        <span class="stat stat--purple">🪪 {{ plates }} plate{{ 's' if plates != 1 else '' }} masked</span>
+        <span class="stat stat--orange">🖥️ {{ screens }} screen{{ 's' if screens != 1 else '' }} pixelated</span>
+      </div>
+
+      {% if faces == 0 and plates == 0 and screens == 0 %}
+      <div class="alert alert--warn">No sensitive regions detected — image returned unchanged.</div>
+      {% endif %}
+    </header>
+
+    <!-- Side-by-side comparison -->
+    <div class="compare-grid">
+      <div class="compare-panel">
+        <div class="compare-panel__label">Original</div>
+        <img class="compare-img" src="{{ original }}" alt="Original uploaded image" />
+      </div>
+      <div class="compare-divider">→</div>
+      <div class="compare-panel">
+        <div class="compare-panel__label compare-panel__label--processed">Processed</div>
+        <img class="compare-img" src="{{ processed }}" alt="Privacy-filtered image" />
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions-row">
+      <a class="btn btn--outline" href="/">← Process another image</a>
+      <a class="btn"
+         href="{{ processed }}"
+         download="privacy_filtered.{{ ext }}"
+         id="download-btn">
+        ⬇ Download result
+      </a>
+    </div>
+
+    <p class="privacy-note">🛡️ Not stored on any server — images never left your machine.</p>
+  </div>
+</body>
+</html>

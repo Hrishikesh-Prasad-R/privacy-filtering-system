@@ -1,0 +1,329 @@
+# PRD — Smart Visual Privacy Protection
+
+---
+
+## Product Overview
+
+Smart Visual Privacy Protection is a locally-run web application built in Python that accepts an image upload from a user and returns that same image with all detected faces and license plates automatically blurred. The system uses pre-trained models bundled with OpenCV — no training, no GPU, no cloud dependency. The entire pipeline runs on the user's machine.
+
+---
+
+## Problem Being Solved
+
+When images are shared publicly — on social media, in news articles, in academic papers, in legal proceedings, or on mapping platforms — they routinely contain identifiable information about people who never consented to being photographed or identified. Two categories of information are the most critical and most commonly exposed: human faces and vehicle license plates. Faces allow direct identification of individuals. License plates allow indirect identification — from a plate number you can determine vehicle registration, and in many cases trace the owner's address and movements.
+
+Manual blurring in tools like Photoshop is the only cu# PRD — Smart Visual Privacy Protection
+
+---
+
+## Product Overview
+
+Smart Visual Privacy Protection is a locally-run web application built in Python that accepts an image upload from a user and returns that same image with all detected faces and license plates automatically blurred. The system uses pre-trained models bundled with OpenCV — no training, no GPU, no cloud dependency. The entire pipeline runs on the user's machine.
+
+---
+
+## Problem Being Solved
+
+When images are shared publicly — on social media, in news articles, in academic papers, in legal proceedings, or on mapping platforms — they routinely contain identifiable information about people who never consented to being photographed or identified. Two categories of information are the most critical and most commonly exposed: human faces and vehicle license plates. Faces allow direct identification of individuals. License plates allow indirect identification — from a plate number you can determine vehicle registration, and in many cases trace the owner's address and movements.
+
+Manual blurring in tools like Photoshop is the only current accessible solution and it is completely impractical at any scale beyond a handful of images. There is no free, offline, automatic tool available to regular users, journalists, researchers, or small organisations that need to process images in bulk.
+
+---
+
+## Users
+
+Primary users are anyone who needs to share images publicly but must protect the identities of people in them. This includes journalists and media organisations, academic researchers publishing visual datasets, legal and law enforcement teams releasing footage, street photographers, travel bloggers, social media users, HR teams sharing internal event photos, and medical professionals sharing imagery for educational purposes.
+
+---
+
+## Core Features
+
+**Automatic face detection.** The system detects all human faces in the uploaded image regardless of size, position, lighting condition, or angle. Faces as small as 10 pixels wide in the background of a crowd scene should be detected alongside large close-up portraits in the same image.
+
+**Automatic license plate detection.** The system detects all vehicle license plates in the uploaded image. Plates are identified by their characteristic rectangular shape, high contrast text pattern, and aspect ratio.
+
+**Gaussian blur application.** Every detected region — face or plate — has a strong Gaussian blur applied to it, making it completely unreadable while looking visually natural rather than a harsh black box or solid fill.
+
+**Web interface for upload and download.** A simple browser-based UI where the user selects an image file, submits it, and receives the processed output image for download.
+
+**Local processing.** No image data is sent to any external server or API. Everything runs on the user's machine.
+
+**Original preservation.** The system always works on a copy of the uploaded image. The original file is never modified.
+
+---
+
+## What Is Out of Scope
+
+Video processing (though the architecture supports it as a future extension). Re-identification prevention beyond blurring. Detection of other sensitive information such as documents, screens, or text. Cloud deployment. Mobile application. Batch processing of multiple images in one upload (MVP only handles one image at a time).
+
+---
+
+## Technical Specification
+
+**Language:** Python 3.8 or higher
+
+**Core library:** OpenCV (`opencv-python`)
+
+**Web framework:** Flask
+
+**Face detection method:** Haar Cascade Classifier using `haarcascade_frontalface_default.xml` (bundled with OpenCV) as the primary detector, optionally supplemented by the DNN-based SSD face detector using `res10_300x300_ssd_iter_140000.caffemodel` and `deploy.prototxt` (downloadable from OpenCV's GitHub repository, two files, drop-in load)
+
+**License plate detection method:** Haar Cascade Classifier using `haarcascade_russian_plate_number.xml` (bundled with OpenCV) supplemented by contour-based detection — convert to grayscale, apply Canny edge detection, find contours, filter for rectangles with aspect ratio between 2:1 and 5:1
+
+**Blur method:** `cv2.GaussianBlur()` with kernel size 51×51 minimum, 99×99 for stronger blur
+
+**Non-maximum suppression:** Applied to remove duplicate overlapping detections of the same face or plate
+
+**Confidence threshold:** 0.5 (50%) minimum confidence for DNN detections, tunable
+
+**Supported input formats:** JPEG, PNG, BMP, WEBP
+
+**Output format:** JPEG or PNG matching input
+
+**Folder structure:**
+```
+project/
+├── app.py
+├── detector.py
+├── templates/
+│   └── index.html
+├── static/
+│   └── style.css
+├── uploads/
+├── outputs/
+└── models/
+    ├── haarcascade_frontalface_default.xml
+    ├── haarcascade_russian_plate_number.xml
+    ├── res10_300x300_ssd_iter_140000.caffemodel
+    └── deploy.prototxt
+```
+
+---
+
+## Processing Pipeline — Detailed
+
+1. User selects image file in browser and submits the form
+2. Flask receives the file, validates the extension, saves it to the `uploads/` folder with a unique filename
+3. `detector.py` is called with the file path
+4. OpenCV reads the image into a NumPy array using `cv2.imread()`
+5. A copy of the array is made — all modifications happen on the copy
+6. The image is converted to grayscale for Haar Cascade detection
+7. Face cascade runs `detectMultiScale()` on the grayscale image — returns list of (x, y, w, h) bounding boxes
+8. If using DNN detector: image is converted to blob using `cv2.dnn.blobFromImage()`, passed through the network, outputs filtered by confidence threshold, bounding boxes extracted
+9. Both face detection results are merged, non-maximum suppression applied to remove duplicates
+10. Plate cascade runs `detectMultiScale()` — returns list of (x, y, w, h) bounding boxes
+11. Contour-based plate detection runs in parallel — Canny edges → findContours → filter by aspect ratio and area → add to plate bounding box list
+12. Plate detections merged, NMS applied
+13. For every bounding box in both lists: extract the region of interest (ROI) from the image copy, apply `cv2.GaussianBlur()` with chosen kernel size, place blurred ROI back into the image copy at the same coordinates
+14. Processed image saved to `outputs/` folder
+15. Flask serves the output image back to the browser as a downloadable file
+16. Upload and output files are cleared from server after download (privacy)
+
+---
+
+## Performance Expectations
+
+A standard 12-megapixel smartphone photo should process in under 3 seconds on a modern laptop CPU with no GPU. Lower resolution images (under 2MP) should process in under 1 second. Processing time scales roughly linearly with image resolution.
+
+---
+
+## Known Limitations and Edge Cases
+
+Haar Cascade detectors have lower accuracy on faces at extreme profile angles (more than 45 degrees turned from frontal). Faces with heavy occlusion — sunglasses, masks, scarves — may not be detected. Very small faces (under 20×20 pixels) at low image resolution may be missed. License plates from countries with unusual formats (non-rectangular, vertical text) may not be detected. The system may produce false positives on geometric patterns or high-contrast rectangular regions that resemble plates. All of these should be documented in the project report as known limitations, not treated as failures to fix — they are inherent to the pre-trained models being used.
+
+---
+
+## Success Criteria
+
+The system correctly detects and blurs all clearly visible frontal faces in a test image. The system correctly detects and blurs standard rectangular license plates in a test image. The output image is visually identical to the input outside the blurred regions. The web interface accepts an upload and returns a download without errors. The system processes a standard smartphone photo in under 5 seconds.
+
+---
+---
+
+# Complete Build Prompt
+
+Use this as a single prompt to give to an AI coding assistant (Claude, ChatGPT, Cursor, etc.). Paste it entirely, do not split it up.
+
+---
+
+> Build a complete Python web application called Smart Visual Privacy Protection. The application automatically detects all human faces and vehicle license plates in an uploaded image and applies Gaussian blur to each detected region, returning a privacy-safe version of the image.
+>
+> **Stack:** Python 3, OpenCV (`opencv-python`), Flask. No external APIs, no cloud services, no paid models. Everything runs locally.
+>
+> **Project structure:**
+> ```
+> project/
+> ├── app.py
+> ├── detector.py
+> ├── templates/index.html
+> ├── static/style.css
+> ├── uploads/
+> ├── outputs/
+> └── models/
+> ```
+>
+> **detector.py** must do the following: Accept an image file path as input. Read the image using `cv2.imread()`. Make a copy of the image to work on non-destructively. Run face detection using OpenCV's Haar Cascade with `haarcascade_frontalface_default.xml` (use `cv2.data.haarcascades` to get the path — it's bundled with opencv-python, no download needed). Also run the DNN-based face detector using `res10_300x300_ssd_iter_140000.caffemodel` and `deploy.prototxt` loaded from the `models/` folder — pass the image through as a blob using `cv2.dnn.blobFromImage()`, filter detections above 0.5 confidence, extract bounding boxes. Merge both face detection results and apply non-maximum suppression to remove duplicate overlapping boxes. Run license plate detection using Haar Cascade with `haarcascade_russian_plate_number.xml` (also bundled with opencv-python). Also run contour-based plate detection: convert to grayscale, apply `cv2.Canny()`, run `cv2.findContours()`, filter contours by aspect ratio between 2.0 and 5.5 and minimum area of 1500 pixels, approximate as rectangles. Merge both plate detection results and apply non-maximum suppression. For every bounding box detected (faces and plates combined): extract the region of interest from the image copy, apply `cv2.GaussianBlur()` with kernel size (99, 99) and sigma 30, write the blurred region back to the image copy at the exact same coordinates. Save the output image to the `outputs/` folder with a unique filename. Return the output file path.
+>
+> **app.py** must do the following: Set up a Flask app with a route for GET and POST on `/`. On GET, render `index.html`. On POST, receive the uploaded file, validate that it is a JPEG, PNG, BMP, or WEBP by checking the file extension, save it to the `uploads/` folder with a UUID-based filename to avoid collisions, call `detector.py`'s main function with the saved path, receive the output path back, serve the output image as a downloadable file using `send_file()` with `as_attachment=True`. After serving, delete both the upload and output files from disk for privacy.
+>
+> **templates/index.html** must be a clean, minimal HTML page with a centered card layout. It has a heading "Smart Visual Privacy Protection", a subheading "Upload an image — faces and license plates will be automatically blurred", a file input that accepts image files only, a submit button labelled "Process Image", and a note that says "Your image is processed locally and never stored." Style it with the linked stylesheet. No JavaScript frameworks, plain HTML only.
+>
+> **static/style.css** must style the page with a dark background (`#0f0f0f`), a centered white card with rounded corners and subtle shadow, clean sans-serif font, a teal accent color (`#00b4a6`) for the button, and a hover effect on the button. The file input should be styled cleanly. The overall feel should be minimal and professional, not generic Bootstrap.
+>
+> **Error handling:** If no faces or plates are detected, still return the image (unmodified copy) with a message that nothing was found. If the uploaded file is not a valid image format, return a 400 error with a clear message. If the models folder is missing the DNN files, fall back gracefully to Haar Cascade only without crashing.
+>
+> **Requirements.txt** must include: flask, opencv-python, numpy.
+>
+> **README.md** must include: one-paragraph project description, installation steps (`pip install -r requirements.txt`), instructions to download the two DNN model files (`res10_300x300_ssd_iter_140000.caffemodel` and `deploy.prototxt`) from OpenCV's GitHub and place them in the `models/` folder, how to run the app (`python app.py`), and a note that the Haar Cascade XML files do not need to be downloaded separately as they are bundled with opencv-python.
+>
+> Write all files completely with no placeholders, no TODOs, and no truncation. The application must run end to end with `pip install -r requirements.txt` followed by `python app.py`.rrent accessible solution and it is completely impractical at any scale beyond a handful of images. There is no free, offline, automatic tool available to regular users, journalists, researchers, or small organisations that need to process images in bulk.
+
+---
+
+## Users
+
+Primary users are anyone who needs to share images publicly but must protect the identities of people in them. This includes journalists and media organisations, academic researchers publishing visual datasets, legal and law enforcement teams releasing footage, street photographers, travel bloggers, social media users, HR teams sharing internal event photos, and medical professionals sharing imagery for educational purposes.
+
+---
+
+## Core Features
+
+**Automatic face detection.** The system detects all human faces in the uploaded image regardless of size, position, lighting condition, or angle. Faces as small as 10 pixels wide in the background of a crowd scene should be detected alongside large close-up portraits in the same image.
+
+**Automatic license plate detection.** The system detects all vehicle license plates in the uploaded image. Plates are identified by their characteristic rectangular shape, high contrast text pattern, and aspect ratio.
+
+**Gaussian blur application.** Every detected region — face or plate — has a strong Gaussian blur applied to it, making it completely unreadable while looking visually natural rather than a harsh black box or solid fill.
+
+**Web interface for upload and download.** A simple browser-based UI where the user selects an image file, submits it, and receives the processed output image for download.
+
+**Local processing.** No image data is sent to any external server or API. Everything runs on the user's machine.
+
+**Original preservation.** The system always works on a copy of the uploaded image. The original file is never modified.
+
+---
+
+## What Is Out of Scope
+
+Video processing (though the architecture supports it as a future extension). Re-identification prevention beyond blurring. Detection of other sensitive information such as documents, screens, or text. Cloud deployment. Mobile application. Batch processing of multiple images in one upload (MVP only handles one image at a time).
+
+---
+
+## Technical Specification
+
+**Language:** Python 3.8 or higher
+
+**Core library:** OpenCV (`opencv-python`)
+
+**Web framework:** Flask
+
+**Face detection method:** Haar Cascade Classifier using `haarcascade_frontalface_default.xml` (bundled with OpenCV) as the primary detector, optionally supplemented by the DNN-based SSD face detector using `res10_300x300_ssd_iter_140000.caffemodel` and `deploy.prototxt` (downloadable from OpenCV's GitHub repository, two files, drop-in load)
+
+**License plate detection method:** Haar Cascade Classifier using `haarcascade_russian_plate_number.xml` (bundled with OpenCV) supplemented by contour-based detection — convert to grayscale, apply Canny edge detection, find contours, filter for rectangles with aspect ratio between 2:1 and 5:1
+
+**Blur method:** `cv2.GaussianBlur()` with kernel size 51×51 minimum, 99×99 for stronger blur
+
+**Non-maximum suppression:** Applied to remove duplicate overlapping detections of the same face or plate
+
+**Confidence threshold:** 0.5 (50%) minimum confidence for DNN detections, tunable
+
+**Supported input formats:** JPEG, PNG, BMP, WEBP
+
+**Output format:** JPEG or PNG matching input
+
+**Folder structure:**
+```
+project/
+├── app.py
+├── detector.py
+├── templates/
+│   └── index.html
+├── static/
+│   └── style.css
+├── uploads/
+├── outputs/
+└── models/
+    ├── haarcascade_frontalface_default.xml
+    ├── haarcascade_russian_plate_number.xml
+    ├── res10_300x300_ssd_iter_140000.caffemodel
+    └── deploy.prototxt
+```
+
+---
+
+## Processing Pipeline — Detailed
+
+1. User selects image file in browser and submits the form
+2. Flask receives the file, validates the extension, saves it to the `uploads/` folder with a unique filename
+3. `detector.py` is called with the file path
+4. OpenCV reads the image into a NumPy array using `cv2.imread()`
+5. A copy of the array is made — all modifications happen on the copy
+6. The image is converted to grayscale for Haar Cascade detection
+7. Face cascade runs `detectMultiScale()` on the grayscale image — returns list of (x, y, w, h) bounding boxes
+8. If using DNN detector: image is converted to blob using `cv2.dnn.blobFromImage()`, passed through the network, outputs filtered by confidence threshold, bounding boxes extracted
+9. Both face detection results are merged, non-maximum suppression applied to remove duplicates
+10. Plate cascade runs `detectMultiScale()` — returns list of (x, y, w, h) bounding boxes
+11. Contour-based plate detection runs in parallel — Canny edges → findContours → filter by aspect ratio and area → add to plate bounding box list
+12. Plate detections merged, NMS applied
+13. For every bounding box in both lists: extract the region of interest (ROI) from the image copy, apply `cv2.GaussianBlur()` with chosen kernel size, place blurred ROI back into the image copy at the same coordinates
+14. Processed image saved to `outputs/` folder
+15. Flask serves the output image back to the browser as a downloadable file
+16. Upload and output files are cleared from server after download (privacy)
+
+---
+
+## Performance Expectations
+
+A standard 12-megapixel smartphone photo should process in under 3 seconds on a modern laptop CPU with no GPU. Lower resolution images (under 2MP) should process in under 1 second. Processing time scales roughly linearly with image resolution.
+
+---
+
+## Known Limitations and Edge Cases
+
+Haar Cascade detectors have lower accuracy on faces at extreme profile angles (more than 45 degrees turned from frontal). Faces with heavy occlusion — sunglasses, masks, scarves — may not be detected. Very small faces (under 20×20 pixels) at low image resolution may be missed. License plates from countries with unusual formats (non-rectangular, vertical text) may not be detected. The system may produce false positives on geometric patterns or high-contrast rectangular regions that resemble plates. All of these should be documented in the project report as known limitations, not treated as failures to fix — they are inherent to the pre-trained models being used.
+
+---
+
+## Success Criteria
+
+The system correctly detects and blurs all clearly visible frontal faces in a test image. The system correctly detects and blurs standard rectangular license plates in a test image. The output image is visually identical to the input outside the blurred regions. The web interface accepts an upload and returns a download without errors. The system processes a standard smartphone photo in under 5 seconds.
+
+---
+---
+
+# Complete Build Prompt
+
+Use this as a single prompt to give to an AI coding assistant (Claude, ChatGPT, Cursor, etc.). Paste it entirely, do not split it up.
+
+---
+
+> Build a complete Python web application called Smart Visual Privacy Protection. The application automatically detects all human faces and vehicle license plates in an uploaded image and applies Gaussian blur to each detected region, returning a privacy-safe version of the image.
+>
+> **Stack:** Python 3, OpenCV (`opencv-python`), Flask. No external APIs, no cloud services, no paid models. Everything runs locally.
+>
+> **Project structure:**
+> ```
+> project/
+> ├── app.py
+> ├── detector.py
+> ├── templates/index.html
+> ├── static/style.css
+> ├── uploads/
+> ├── outputs/
+> └── models/
+> ```
+>
+> **detector.py** must do the following: Accept an image file path as input. Read the image using `cv2.imread()`. Make a copy of the image to work on non-destructively. Run face detection using OpenCV's Haar Cascade with `haarcascade_frontalface_default.xml` (use `cv2.data.haarcascades` to get the path — it's bundled with opencv-python, no download needed). Also run the DNN-based face detector using `res10_300x300_ssd_iter_140000.caffemodel` and `deploy.prototxt` loaded from the `models/` folder — pass the image through as a blob using `cv2.dnn.blobFromImage()`, filter detections above 0.5 confidence, extract bounding boxes. Merge both face detection results and apply non-maximum suppression to remove duplicate overlapping boxes. Run license plate detection using Haar Cascade with `haarcascade_russian_plate_number.xml` (also bundled with opencv-python). Also run contour-based plate detection: convert to grayscale, apply `cv2.Canny()`, run `cv2.findContours()`, filter contours by aspect ratio between 2.0 and 5.5 and minimum area of 1500 pixels, approximate as rectangles. Merge both plate detection results and apply non-maximum suppression. For every bounding box detected (faces and plates combined): extract the region of interest from the image copy, apply `cv2.GaussianBlur()` with kernel size (99, 99) and sigma 30, write the blurred region back to the image copy at the exact same coordinates. Save the output image to the `outputs/` folder with a unique filename. Return the output file path.
+>
+> **app.py** must do the following: Set up a Flask app with a route for GET and POST on `/`. On GET, render `index.html`. On POST, receive the uploaded file, validate that it is a JPEG, PNG, BMP, or WEBP by checking the file extension, save it to the `uploads/` folder with a UUID-based filename to avoid collisions, call `detector.py`'s main function with the saved path, receive the output path back, serve the output image as a downloadable file using `send_file()` with `as_attachment=True`. After serving, delete both the upload and output files from disk for privacy.
+>
+> **templates/index.html** must be a clean, minimal HTML page with a centered card layout. It has a heading "Smart Visual Privacy Protection", a subheading "Upload an image — faces and license plates will be automatically blurred", a file input that accepts image files only, a submit button labelled "Process Image", and a note that says "Your image is processed locally and never stored." Style it with the linked stylesheet. No JavaScript frameworks, plain HTML only.
+>
+> **static/style.css** must style the page with a dark background (`#0f0f0f`), a centered white card with rounded corners and subtle shadow, clean sans-serif font, a teal accent color (`#00b4a6`) for the button, and a hover effect on the button. The file input should be styled cleanly. The overall feel should be minimal and professional, not generic Bootstrap.
+>
+> **Error handling:** If no faces or plates are detected, still return the image (unmodified copy) with a message that nothing was found. If the uploaded file is not a valid image format, return a 400 error with a clear message. If the models folder is missing the DNN files, fall back gracefully to Haar Cascade only without crashing.
+>
+> **Requirements.txt** must include: flask, opencv-python, numpy.
+>
+> **README.md** must include: one-paragraph project description, installation steps (`pip install -r requirements.txt`), instructions to download the two DNN model files (`res10_300x300_ssd_iter_140000.caffemodel` and `deploy.prototxt`) from OpenCV's GitHub and place them in the `models/` folder, how to run the app (`python app.py`), and a note that the Haar Cascade XML files do not need to be downloaded separately as they are bundled with opencv-python.
+>
+> Write all files completely with no placeholders, no TODOs, and no truncation. The application must run end to end with `pip install -r requirements.txt` followed by `python app.py`.
