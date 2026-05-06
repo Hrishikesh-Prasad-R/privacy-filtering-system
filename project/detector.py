@@ -2,15 +2,21 @@
 detector.py — Context-Aware Privacy Filtering System
 
 Detection strategy:
-  • Faces        → Gaussian blur  (Haar Cascade + DNN SSD)
-  • License plates → Black mask   (Haar Cascade + contour)
+  • Faces          → Gaussian blur   (Haar Cascade + DNN SSD)
+  • License plates → Black mask      (Haar Cascade + contour)
   • Screens / phones / laptops → Pixelation  (YOLOv8)
+
+Performance fixes:
+  • All models (Haar cascades, DNN net, YOLO) loaded ONCE as module-level
+    singletons — never re-read from disk per request.
+  • Face, plate and screen detection run in PARALLEL via ThreadPoolExecutor.
 """
 
 import os
 import uuid
 import cv2
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ──────────────────────────────────────────────────────────────────────────────
 # YOLO class IDs (COCO) we treat as "screens / devices"
@@ -20,6 +26,56 @@ SCREEN_CLASSES = {
     63: "laptop",
     67: "cell phone",
 }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Module-level singletons  — loaded ONCE at import time, reused forever
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Haar: frontal face
+_haar_face_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+_haar_face_clf  = cv2.CascadeClassifier(_haar_face_path)
+
+# Haar: license plate
+_haar_plate_path = os.path.join(cv2.data.haarcascades, "haarcascade_russian_plate_number.xml")
+_haar_plate_clf  = (
+    cv2.CascadeClassifier(_haar_plate_path)
+    if os.path.isfile(_haar_plate_path) else None
+)
+
+# DNN SSD face net  — populated lazily so missing model files don't crash startup
+_dnn_net = None
+
+def _get_dnn(models_dir: str):
+    """Load the Caffe SSD face net once; return None if files are absent."""
+    global _dnn_net
+    if _dnn_net is not None:
+        return _dnn_net
+    proto = os.path.join(models_dir, "deploy.prototxt")
+    model = os.path.join(models_dir, "res10_300x300_ssd_iter_140000.caffemodel")
+    if not os.path.isfile(proto) or not os.path.isfile(model):
+        return None
+    try:
+        _dnn_net = cv2.dnn.readNetFromCaffe(proto, model)
+    except Exception:
+        _dnn_net = None
+    return _dnn_net
+
+# YOLO
+_yolo_model = None
+
+def _get_yolo():
+    global _yolo_model
+    if _yolo_model is None:
+        try:
+            from ultralytics import YOLO
+            _yolo_model = YOLO("yolov8n.pt")
+        except Exception:
+            _yolo_model = None
+    return _yolo_model
+
+# Eagerly warm up YOLO at import time
+_get_yolo()
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NMS helper
@@ -49,29 +105,26 @@ def _nms(boxes, overlap_thresh=0.3):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Face detection  (Haar + DNN SSD)
+# Face detection  (Haar singleton + DNN SSD singleton)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _detect_faces_haar(gray):
-    path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-    clf = cv2.CascadeClassifier(path)
-    det = clf.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=4,
-                               minSize=(20, 20), flags=cv2.CASCADE_SCALE_IMAGE)
+    det = _haar_face_clf.detectMultiScale(
+        gray, scaleFactor=1.05, minNeighbors=4,
+        minSize=(20, 20), flags=cv2.CASCADE_SCALE_IMAGE
+    )
     return [tuple(int(v) for v in d) for d in det] if len(det) else []
 
 
 def _detect_faces_dnn(image, models_dir, conf=0.5):
-    proto = os.path.join(models_dir, "deploy.prototxt")
-    model = os.path.join(models_dir, "res10_300x300_ssd_iter_140000.caffemodel")
-    if not os.path.isfile(proto) or not os.path.isfile(model):
-        return []
-    try:
-        net = cv2.dnn.readNetFromCaffe(proto, model)
-    except Exception:
+    net = _get_dnn(models_dir)
+    if net is None:
         return []
     h, w = image.shape[:2]
-    blob = cv2.dnn.blobFromImage(cv2.resize(image, (300, 300)), 1.0,
-                                  (300, 300), (104.0, 177.0, 123.0))
+    blob = cv2.dnn.blobFromImage(
+        cv2.resize(image, (300, 300)), 1.0,
+        (300, 300), (104.0, 177.0, 123.0)
+    )
     net.setInput(blob)
     dets = net.forward()
     boxes = []
@@ -92,15 +145,15 @@ def detect_faces(image, gray, models_dir):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# License-plate detection  (Haar + contour)
+# License-plate detection  (Haar singleton + contour)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _detect_plates_haar(gray):
-    path = os.path.join(cv2.data.haarcascades, "haarcascade_russian_plate_number.xml")
-    if not os.path.isfile(path):
+    if _haar_plate_clf is None:
         return []
-    clf = cv2.CascadeClassifier(path)
-    det = clf.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(30, 10))
+    det = _haar_plate_clf.detectMultiScale(
+        gray, scaleFactor=1.05, minNeighbors=3, minSize=(30, 10)
+    )
     return [tuple(int(v) for v in d) for d in det] if len(det) else []
 
 
@@ -125,32 +178,10 @@ def detect_plates(gray):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Screen / device detection  (YOLOv8)
+# Screen / device detection  (YOLOv8 singleton)
 # ──────────────────────────────────────────────────────────────────────────────
 
-# ── Load YOLO once at import time (module-level singleton) ────────────────────
-_yolo_model = None
-
-def _get_yolo():
-    global _yolo_model
-    if _yolo_model is None:
-        try:
-            from ultralytics import YOLO
-            _yolo_model = YOLO("yolov8n.pt")
-        except Exception:
-            _yolo_model = None
-    return _yolo_model
-
-# Eagerly load at import time so the server has it ready before first request
-_get_yolo()
-
-
 def detect_screens(image, conf=0.4):
-    """
-    Uses the pre-loaded YOLOv8n singleton — no download delay.
-    Returns list of (x, y, w, h) for detected screens / phones / laptops.
-    Falls back to [] gracefully if ultralytics is unavailable.
-    """
     model = _get_yolo()
     if model is None:
         return []
@@ -221,6 +252,9 @@ def process_image(input_path: str, outputs_dir: str, models_dir: str) -> dict:
     """
     Context-aware privacy filtering pipeline.
 
+    Detectors run in PARALLEL (ThreadPoolExecutor) so total time ≈ slowest
+    single detector rather than sum of all three.
+
     Returns dict:
         output_path   : str
         faces_found   : int
@@ -234,20 +268,31 @@ def process_image(input_path: str, outputs_dir: str, models_dir: str) -> dict:
     output = image.copy()
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # ── Detect ────────────────────────────────────────────────────────────────
-    face_boxes   = detect_faces(image, gray, models_dir)
-    plate_boxes  = detect_plates(gray)
-    screen_boxes = detect_screens(image)
+    # ── Run all 3 detectors in parallel ───────────────────────────────────────
+    results_map = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(detect_faces,   image, gray, models_dir): "faces",
+            pool.submit(detect_plates,  gray):                     "plates",
+            pool.submit(detect_screens, image):                    "screens",
+        }
+        for future in as_completed(futures):
+            key = futures[future]
+            results_map[key] = future.result()
+
+    face_boxes   = results_map["faces"]
+    plate_boxes  = results_map["plates"]
+    screen_boxes = results_map["screens"]
 
     # ── Apply context-aware filters ───────────────────────────────────────────
     for (x, y, w, h) in face_boxes:
-        apply_gaussian_blur(output, x, y, w, h)          # Gaussian blur
+        apply_gaussian_blur(output, x, y, w, h)   # Gaussian blur
 
     for (x, y, w, h) in plate_boxes:
-        apply_black_mask(output, x, y, w, h)              # Black mask
+        apply_black_mask(output, x, y, w, h)       # Black mask
 
     for (x, y, w, h) in screen_boxes:
-        apply_pixelation(output, x, y, w, h)              # Pixelation
+        apply_pixelation(output, x, y, w, h)       # Pixelation
 
     # ── Save ──────────────────────────────────────────────────────────────────
     os.makedirs(outputs_dir, exist_ok=True)
